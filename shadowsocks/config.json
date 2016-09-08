@@ -1,0 +1,7 @@
+{
+    "server":"1.2.3.4",
+    "server_port":8388,
+    "password":"passwd",
+    "timeout":60,
+    "method":"rc4-md5"
+}
