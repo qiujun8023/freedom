@@ -22,7 +22,7 @@
 
 ## 第一步：运行 ss-tunnel ss-redir
 
-* 通过 ifconfig 获取 docker0 的 IP，这里假定为 192.168.0.1 
+* 通过 ifconfig 获取 docker0 的 IP，这里假定为 192.168.0.1
 * 进入仓库的 shadowsocks 目录，根据情况修改 shadowsocks 配置文件
 * 运行：`ss-tunnel -A -u -c config.json -b 192.168.0.1 -l 5353 -L 8.8.8.8:53` ，此命令表示将 8.8.8.8 的 53 端口转发的 docker0(192.168.0.1) 的 5353 端口上面，其中：
   * -A 表示开启一次性验证
@@ -38,7 +38,43 @@
 
 ## 第二步：运行 dnsmasq
 
-* 进入仓库中 dnsmasq 目录，修改 gfwlist.py 里面的 dns_host 与 dns_port 分别为上述 ss-tunnel 中 -b 与 -l 指定的值，上述示例中分别为 192.168.0.1 与 5353
+* 进入仓库中 dnsmasq 目录，根据实际情况修改 config.json：
+```javascript
+{
+  "update_interval": 21600, // gfwlist 及 adlist 更新间隔（单位：秒）
+  "default_dns": [          // 默认 DNS
+    "10.202.72.116",
+    "10.202.72.118"
+  ],
+  "default_file": {
+    "temp": "/tmp/default.conf",             // 临时文件存放位置，下同
+    "target": "/etc/dnsmasq.d/default.conf"  // 目标存放位置，下同
+  },
+  "gfw_dns": [  // gfwlist中使用的dns，于上方 ss-tunnel 设置的一致即可
+    "192.168.0.1#5353"
+  ],
+  "gfw_list": [ // 文件格式如下方示例网址即可
+    "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt"
+  ],
+  "gfw_list_ex": [  // 额外添加的条目
+    "google.com",
+    "google.com.hk"
+  ],
+  "gfw_file": {
+    "temp": "/tmp/gfwlist.conf",
+    "target": "/etc/dnsmasq.d/gfwlist.conf"
+  },
+  "ad_list": [
+    "https://raw.githubusercontent.com/vokins/yhosts/master/hosts"
+  ],
+  "ad_list_ex": [
+  ],
+  "ad_file": {
+    "temp": "/tmp/adlist.conf",
+    "target": "/etc/dnsmasq.d/adlist.conf"
+  }
+}
+```
 * 运行：`docker build .` 制作 docker 镜像，得到镜像 ID ，这里假定为 abcdefabcdef
 * 运行：`docker run --name dnsmasq -p 53:53 -p 53:53/udp -d dnsmasq`
 * 如顺利，到此无污染 DNS 已经搭建完毕，可以使用 dig www.google.com @127.0.0.1 测试

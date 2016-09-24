@@ -7,12 +7,10 @@ COPY sources.list /etc/apt/sources.list
 RUN apt-get update && apt-get install -y python dnsmasq && apt-get clean
 
 COPY gfwlist.py ./
-COPY google.list ./
-
-RUN python ./gfwlist.py
+COPY config.json ./
+COPY dnsmasq.conf /etc/dnsmasq.conf
 
 EXPOSE 53/tcp
 EXPOSE 53/udp
 
-ENTRYPOINT ["dnsmasq", "-7", "/etc/dnsmasq.d"]
-CMD ["-S", "114.114.114.114", "-h", "-d"]
+CMD service dnsmasq start && python -u ./gfwlist.py
