@@ -17,7 +17,7 @@ iptables -t nat -N SHADOWSOCKS
 # Shadowsocks 服务端地址，非常重要！！！
 iptables -t nat -A SHADOWSOCKS -d 1.2.3.4 -j RETURN
 
-# 内网网段
+# 跳过内网网段
 iptables -t nat -A SHADOWSOCKS -d 0.0.0.0/8 -j RETURN
 iptables -t nat -A SHADOWSOCKS -d 10.0.0.0/8 -j RETURN
 iptables -t nat -A SHADOWSOCKS -d 127.0.0.0/8 -j RETURN
@@ -31,11 +31,13 @@ iptables -t nat -A SHADOWSOCKS -d 240.0.0.0/4 -j RETURN
 ipset create chnroute hash:net
 cat chnroute.txt | xargs -I ip ipset add chnroute ip
 
-# 国内ip表直连
+# 跳过国内IP段
 iptables -t nat -A SHADOWSOCKS -m set --match-set chnroute dst -j RETURN
+
 # 域名解析走本机
-iptables -t nat -A SHADOWSOCKS -p tcp --dport 53 -j DNAT --to 127.0.0.1
-iptables -t nat -A SHADOWSOCKS -p udp --dport 53 -j DNAT --to 127.0.0.1
+iptables -t nat -A SHADOWSOCKS -p tcp --dport 53 -j REDIRECT --to-ports 53
+iptables -t nat -A SHADOWSOCKS -p udp --dport 53 -j REDIRECT --to-ports 53
+
 # 其他请求走代理
 iptables -t nat -A SHADOWSOCKS -p tcp -j REDIRECT --to-ports 1080
 iptables -t nat -A SHADOWSOCKS -p udp -j REDIRECT --to-ports 1080

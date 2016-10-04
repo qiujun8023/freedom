@@ -7,7 +7,6 @@
 * 通过国内服务器中转一般可以加快访问国外网站的速度，选择合适的服务器线路，速度可以得到很大的提升，并且无丢包，如果国内服务器为 BGP 线路，则优势更大
 * 客户端可以使用全局代理方案，一般情况下可以防止运营商网络劫持、WIFI 钓鱼等
 * 特殊的组合方式，可以同时实现 防劫持、科学上网、免流等，具体自己研究
-* ...
 
 ## 原理
 
@@ -24,12 +23,12 @@
 
 * 通过 ifconfig 获取 docker0 的 IP，这里假定为 192.168.0.1
 * 进入仓库的 shadowsocks 目录，根据情况修改 shadowsocks 配置文件
-* 运行：`ss-tunnel -A -u -c config.json -b 192.168.0.1 -l 5353 -L 8.8.8.8:53` ，此命令表示将 8.8.8.8 的 53 端口转发的 docker0(192.168.0.1) 的 5353 端口上面，其中：
+* 运行：`ss-tunnel -A -u -c config.json -b 192.168.0.1 -l 53 -L 8.8.8.8:53` ，此命令表示将 8.8.8.8 的 53 端口转发的 docker0(192.168.0.1) 的 53 端口上面，其中：
   * -A 表示开启一次性验证
   * -u 表示开启 UDP 转发
   * -c config.json 表示使用上述 shadowsocks 目录下的的 config.json 文件
   * -b 192.168.0.1 表示本地监听 docker0 的 IP （用来给 docker 中运行的 dnsmasq 的 gfwlist 使用）
-  * -l 5353 表示监听 docker0 的 5353 端口
+  * -l 53 表示监听 docker0 的 53 端口
   * -L 8.8.8.8:53 表示远程为 8.8.8.8 的 53 端口
 
 * 运行：`ss-redir -A -u -c config.json -l 1080` 此条命令监听 1080 端口给 iptables 使用
@@ -51,7 +50,7 @@
     "target": "/etc/dnsmasq.d/default.conf"  // 目标存放位置，下同
   },
   "gfw_dns": [  // gfwlist中使用的dns，于上方 ss-tunnel 设置的一致即可
-    "192.168.0.1#5353"
+    "192.168.0.1#53"
   ],
   "gfw_list": [ // 文件格式如下方示例网址即可
     "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt"
@@ -75,13 +74,17 @@
   }
 }
 ```
-* 运行：`docker build .` 制作 docker 镜像，得到镜像 ID ，这里假定为 abcdefabcdef
-* 运行：`docker run --name dnsmasq -p 53:53 -p 53:53/udp -d dnsmasq`
+* 运行：`docker build .` 制作 docker 镜像，得到镜像 ID ，这里假定为 `abcdefabcdef`
+* 运行：`docker run --name dnsmasq -p 53:53 -p 53:53/udp -d abcdefabcdef`
 * 如顺利，到此无污染 DNS 已经搭建完毕，可以使用 dig www.google.com @127.0.0.1 测试
-* 如测试通过，再修改所机器的 DNS 为 127.0.0.1 即可
+* 如测试通过，则进入下一步
 
 ## 第三步：导入 iptables
 
 * 进入仓库中 iptables 目录中，修改其中的代理服务器 IP 为你的 shadowsocks 服务端的 IP 地址(这步很重要，如果弄错，可能会导致服务器卡死)
 * 运行 `./chnroute.sh`
 * 如顺利，则国内外自动分流已完成
+
+## 存在的问题
+* 由于在 iptables 将 53 端口的 UDP/TCP 流量都转发到了 127.0.0.1 ，所以在使用 nmap 进行端口扫码等操作是，53 端口正常情况下都是开放的
+* 由于只是处理了 UDP/TCP 流量，所以在进行 ping 操作时，正常情况下无法 ping 的服务器可能依旧是无法 ping 通的

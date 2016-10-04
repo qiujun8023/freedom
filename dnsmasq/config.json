@@ -9,7 +9,7 @@
     "target": "/etc/dnsmasq.d/default.conf"
   },
   "gfw_dns": [
-    "192.168.0.1#5353"
+    "192.168.0.1#53"
   ],
   "gfw_list": [
     "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt"
