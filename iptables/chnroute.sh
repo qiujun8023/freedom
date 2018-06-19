@@ -34,10 +34,6 @@ cat chnroute.txt | xargs -I ip ipset add chnroute ip
 # 跳过国内IP段
 iptables -t nat -A SHADOWSOCKS -m set --match-set chnroute dst -j RETURN
 
-# 域名解析走本机
-iptables -t nat -A SHADOWSOCKS -p tcp --dport 53 -j REDIRECT --to-ports 53
-iptables -t nat -A SHADOWSOCKS -p udp --dport 53 -j REDIRECT --to-ports 53
-
 # 其他请求走代理
 iptables -t nat -A SHADOWSOCKS -p tcp -j REDIRECT --to-ports 1080
 iptables -t nat -A SHADOWSOCKS -p udp -j REDIRECT --to-ports 1080
