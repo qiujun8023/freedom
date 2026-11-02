@@ -1,0 +1,8 @@
+# Binaries
+/freedom
+
+# Local config
+config.yaml
+
+# OS
+.DS_Store

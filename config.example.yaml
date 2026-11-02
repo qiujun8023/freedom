@@ -1,0 +1,97 @@
+# 以 x- 开头的顶层字段不会被读取，用来放 YAML 锚点，供下面复用。
+
+x-reality: &reality
+  type: vless
+  port: 443
+  udp: true
+  flow: xtls-rprx-vision
+  tls: true
+  servername: www.example.com
+  client-fingerprint: chrome
+  network: tcp
+
+x-clash-base: &clash-base
+  mixed-port: 7890
+  allow-lan: false
+  mode: rule
+  log-level: info
+  dns:
+    enable: true
+    enhanced-mode: fake-ip
+    fake-ip-range: 198.18.0.1/16
+    nameserver:
+      - 223.5.5.5
+    proxy-server-nameserver:
+      - https://1.1.1.1/dns-query
+  rule-providers:
+    china-domain:
+      type: http
+      behavior: domain
+      format: text
+      url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaDomain.list
+      path: ./ruleset/china-domain.list
+      interval: 86400
+
+x-common-rules: &common-rules
+  - RULE-SET,china-domain,DIRECT
+  - GEOIP,LAN,DIRECT,no-resolve
+  - GEOIP,CN,DIRECT
+  - MATCH,proxy
+
+# 节点：mihomo 的 proxy 写法，原样输出到 Clash 订阅，并转换成分享链接。
+nodes:
+  - name: hk-01
+    <<: *reality
+    server: 203.0.113.10
+    uuid: 00000000-0000-0000-0000-000000000001
+    reality-opts:
+      public-key: tZtmSWvOyJkprZiMgZmtatD8Z4gM9sWuc2kjmYQe75w
+      short-id: "0123"
+
+  - name: jp-01
+    <<: *reality
+    server: 203.0.113.20
+    uuid: 00000000-0000-0000-0000-000000000002
+    reality-opts:
+      public-key: tZtmSWvOyJkprZiMgZmtatD8Z4gM9sWuc2kjmYQe75w
+      short-id: "0123"
+
+  - name: hk-01 => jp-01
+    type: vless
+    server: relay.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000003
+    tls: true
+    servername: relay.example.com
+    network: ws
+    ws-opts:
+      path: /ws
+      headers:
+        Host: relay.example.com
+
+# profile：一份订阅，通常对应一台设备。订阅地址 /sub/<profile>?token=<token>。
+profiles:
+  alice-mac:
+    token: change-me-0123456789abcdef
+    # nodes：节点名正则（全名匹配），不写表示全部节点
+    clash:
+      <<: *clash-base
+      proxy-groups:
+        - name: proxy
+          type: select
+          proxies: [hk-01, jp-01, hk-01 => jp-01]
+      # 列表里嵌套的列表会被展开，方便用锚点拼接规则
+      rules:
+        - DOMAIN-SUFFIX,example.org,jp-01
+        - *common-rules
+
+  alice-android:
+    token: change-me-fedcba9876543210
+    nodes: [hk-.*]
+    clash:
+      <<: *clash-base
+      proxy-groups:
+        - name: proxy
+          type: select
+          proxies: [hk-01, hk-01 => jp-01]
+      rules: *common-rules

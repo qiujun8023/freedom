@@ -1,0 +1,9 @@
+services:
+  freedom:
+    image: ghcr.io/qiujun8023/freedom:latest
+    container_name: freedom
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
