@@ -1,8 +1,8 @@
 # Binaries
 /freedom
 
-# Local config
-config.yaml
+# Local config directory
+/data
 
 # OS
 .DS_Store

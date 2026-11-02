@@ -1,4 +1,9 @@
-// Package config 读取订阅配置，并为每个 profile 预先渲染好各客户端的订阅内容。
+// Package config 读取订阅配置目录，并为每个 profile 预先渲染好各客户端的订阅内容。
+//
+// 目录结构：
+//
+//	nodes.yaml            全部节点，mihomo proxy 写法的列表
+//	profiles/<名字>.yaml   一个订阅一个文件，文件名就是 profile 名
 package config
 
 import (
@@ -6,8 +11,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -34,24 +42,24 @@ func ParseTarget(s string) (Target, bool) {
 	return "", false
 }
 
+const (
+	nodesFile   = "nodes.yaml"
+	profilesDir = "profiles"
+)
+
 // Config 是加载完成的配置，所有 profile 的订阅内容都已渲染好。
 type Config struct {
 	Profiles map[string]*Profile
+	Unused   []string // 没有被任何 profile 用到的节点
 }
 
-// Profile 是一份订阅（通常对应一台设备）。
+// Profile 是一份订阅。
 type Profile struct {
 	Name    string
 	Token   string
-	Nodes   []string // 选中的节点名，按配置顺序
+	Nodes   []string // 选中的节点名，按 nodes.yaml 中的顺序
 	Skipped []string // 无法转换为分享链接而跳过的节点及原因
 	Outputs map[Target][]byte
-}
-
-type rawConfig struct {
-	Nodes    []map[string]any       `yaml:"nodes"`
-	Profiles map[string]*rawProfile `yaml:"profiles"`
-	Extra    map[string]any         `yaml:",inline"`
 }
 
 type rawProfile struct {
@@ -62,88 +70,138 @@ type rawProfile struct {
 
 var profileNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// Load 读取并校验配置文件。
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+// Load 读取并校验配置目录。
+func Load(dir string) (*Config, error) {
+	nodes, err := loadNodes(filepath.Join(dir, nodesFile))
 	if err != nil {
 		return nil, err
 	}
-	return Parse(data)
-}
-
-// Parse 解析并校验配置内容。
-func Parse(data []byte) (*Config, error) {
-	var raw rawConfig
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("解析 YAML: %w", err)
-	}
-	for k := range raw.Extra {
-		if !strings.HasPrefix(k, "x-") {
-			return nil, fmt.Errorf("未知的顶层字段 %q（自定义锚点请用 x- 开头）", k)
-		}
-	}
-
-	nodes, err := checkNodes(raw.Nodes)
+	files, err := profileFiles(dir)
 	if err != nil {
 		return nil, err
 	}
-	if len(raw.Profiles) == 0 {
-		return nil, errors.New("profiles 不能为空")
+	if len(files) == 0 {
+		return nil, fmt.Errorf("%s 下没有 profile", profilesDir)
 	}
 
-	cfg := &Config{Profiles: make(map[string]*Profile, len(raw.Profiles))}
+	cfg := &Config{Profiles: make(map[string]*Profile, len(files))}
+	used := make(map[string]bool)
 	tokens := make(map[string]string)
-	for name, rp := range raw.Profiles {
-		p, err := buildProfile(name, rp, nodes)
+	for _, f := range files {
+		name := strings.TrimSuffix(f, ".yaml")
+		p, err := loadProfile(filepath.Join(dir, profilesDir, f), name, nodes)
 		if err != nil {
-			return nil, fmt.Errorf("profile %s: %w", name, err)
+			return nil, fmt.Errorf("%s/%s: %w", profilesDir, f, err)
 		}
 		if other, ok := tokens[p.Token]; ok {
 			return nil, fmt.Errorf("profile %s 和 %s 的 token 重复", name, other)
 		}
 		tokens[p.Token] = name
+		for _, n := range p.Nodes {
+			used[n] = true
+		}
 		cfg.Profiles[name] = p
+	}
+	for _, n := range nodes {
+		if name := n["name"].(string); !used[name] {
+			cfg.Unused = append(cfg.Unused, name)
+		}
 	}
 	return cfg, nil
 }
 
-func checkNodes(nodes []map[string]any) ([]map[string]any, error) {
+// Fingerprint 返回配置目录内所有配置文件的修改时间和大小，用来判断是否需要重载。
+func Fingerprint(dir string) (string, error) {
+	paths := []string{filepath.Join(dir, nodesFile)}
+	files, err := os.ReadDir(filepath.Join(dir, profilesDir))
+	if err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		paths = append(paths, filepath.Join(dir, profilesDir, f.Name()))
+	}
+	var b strings.Builder
+	for _, p := range paths {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "%s %d %d\n", p, fi.ModTime().UnixNano(), fi.Size())
+	}
+	return b.String(), nil
+}
+
+// profileFiles 列出 profiles 目录下的 profile 文件；以 . 开头的文件忽略，其余不合规的文件报错。
+func profileFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(dir, profilesDir))
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if e.IsDir() {
+			return nil, fmt.Errorf("%s 下不能有子目录: %s", profilesDir, name)
+		}
+		base, ok := strings.CutSuffix(name, ".yaml")
+		if !ok || !profileNameRe.MatchString(base) {
+			return nil, fmt.Errorf("%s/%s: 文件名只能用小写字母、数字和短横线，扩展名为 .yaml", profilesDir, name)
+		}
+		files = append(files, name)
+	}
+	return files, nil
+}
+
+func decodeStrict(path string, v any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("解析 YAML: %w", err)
+	}
+	return nil
+}
+
+func loadNodes(path string) ([]map[string]any, error) {
+	var nodes []map[string]any
+	if err := decodeStrict(path, &nodes); err != nil {
+		return nil, fmt.Errorf("%s: %w", nodesFile, err)
+	}
 	if len(nodes) == 0 {
-		return nil, errors.New("nodes 不能为空")
+		return nil, fmt.Errorf("%s: 没有节点", nodesFile)
 	}
 	seen := make(map[string]bool, len(nodes))
 	for i, n := range nodes {
 		name, _ := n["name"].(string)
 		if name == "" {
-			return nil, fmt.Errorf("第 %d 个节点缺少 name", i+1)
+			return nil, fmt.Errorf("%s: 第 %d 个节点缺少 name", nodesFile, i+1)
 		}
 		if seen[name] {
-			return nil, fmt.Errorf("节点名重复: %s", name)
+			return nil, fmt.Errorf("%s: 节点名重复: %s", nodesFile, name)
 		}
 		seen[name] = true
 		for _, k := range []string{"type", "server", "port"} {
 			if _, ok := n[k]; !ok {
-				return nil, fmt.Errorf("节点 %s 缺少 %s", name, k)
+				return nil, fmt.Errorf("%s: 节点 %s 缺少 %s", nodesFile, name, k)
 			}
 		}
 	}
 	return nodes, nil
 }
 
-func buildProfile(name string, rp *rawProfile, nodes []map[string]any) (*Profile, error) {
-	if !profileNameRe.MatchString(name) {
-		return nil, errors.New("名字只能用小写字母、数字和短横线")
-	}
-	if rp == nil {
-		return nil, errors.New("内容为空")
+func loadProfile(path, name string, nodes []map[string]any) (*Profile, error) {
+	var rp rawProfile
+	if err := decodeStrict(path, &rp); err != nil {
+		return nil, err
 	}
 	if len(rp.Token) < 16 {
 		return nil, errors.New("token 至少 16 个字符")
-	}
-	if rp.Clash == nil {
-		return nil, errors.New("缺少 clash 配置")
 	}
 	if _, ok := rp.Clash["proxies"]; ok {
 		return nil, errors.New("clash 里不要写 proxies，节点由 nodes 选择")
@@ -178,38 +236,33 @@ func buildProfile(name string, rp *rawProfile, nodes []map[string]any) (*Profile
 	return p, nil
 }
 
-// selectNodes 按正则（全名匹配）挑选节点；不写表示全部节点。每个正则都必须至少匹配一个节点。
-func selectNodes(patterns []string, nodes []map[string]any) ([]map[string]any, error) {
-	if len(patterns) == 0 {
+// selectNodes 按节点名挑选节点，结果按 nodes.yaml 中的顺序；不写表示全部节点。
+func selectNodes(names []string, nodes []map[string]any) ([]map[string]any, error) {
+	if len(names) == 0 {
 		return nodes, nil
 	}
-	res := make([]*regexp.Regexp, len(patterns))
-	for i, p := range patterns {
-		re, err := regexp.Compile(`^(?:` + p + `)$`)
-		if err != nil {
-			return nil, fmt.Errorf("nodes 正则 %q: %w", p, err)
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		if want[n] {
+			return nil, fmt.Errorf("nodes 里 %q 重复", n)
 		}
-		res[i] = re
+		want[n] = true
 	}
-	hit := make([]bool, len(res))
 	var out []map[string]any
 	for _, n := range nodes {
 		name := n["name"].(string)
-		matched := false
-		for i, re := range res {
-			if re.MatchString(name) {
-				hit[i] = true
-				matched = true
-			}
-		}
-		if matched {
+		if want[name] {
 			out = append(out, n)
+			delete(want, name)
 		}
 	}
-	for i, ok := range hit {
-		if !ok {
-			return nil, fmt.Errorf("nodes 正则 %q 没有匹配任何节点", patterns[i])
+	if len(want) > 0 {
+		missing := make([]string, 0, len(want))
+		for n := range want {
+			missing = append(missing, n)
 		}
+		slices.Sort(missing)
+		return nil, fmt.Errorf("nodes 里的节点不存在: %s", strings.Join(missing, ", "))
 	}
 	return out, nil
 }

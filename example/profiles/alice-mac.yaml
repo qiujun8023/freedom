@@ -1,0 +1,43 @@
+# 订阅地址：/sub/alice-mac?token=<token>，文件名就是 profile 名。
+token: change-me-0123456789abcdef
+
+# 节点名，按 nodes.yaml 中的顺序输出；不写表示全部节点。
+nodes:
+  - hk-01
+  - jp-01
+  - hk-01 => jp-01
+
+# 只在输出 Clash 格式时使用：mihomo 配置，不写 proxies。
+clash:
+  mixed-port: 7890
+  mode: rule
+  log-level: info
+  dns:
+    enable: true
+    enhanced-mode: fake-ip
+    fake-ip-range: 198.18.0.1/16
+    nameserver:
+      - 223.5.5.5
+    proxy-server-nameserver:
+      - https://1.1.1.1/dns-query
+  proxy-groups:
+    - name: proxy
+      type: select
+      proxies:
+        - hk-01
+        - jp-01
+        - hk-01 => jp-01
+  rule-providers:
+    china-domain:
+      type: http
+      behavior: domain
+      format: text
+      url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaDomain.list
+      path: ./ruleset/china-domain.list
+      interval: 86400
+  rules:
+    - DOMAIN-SUFFIX,example.org,jp-01
+    - RULE-SET,china-domain,DIRECT
+    - GEOIP,LAN,DIRECT,no-resolve
+    - GEOIP,CN,DIRECT
+    - MATCH,proxy

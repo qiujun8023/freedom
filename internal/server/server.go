@@ -1,4 +1,4 @@
-// Package server 提供订阅 HTTP 接口，并在配置文件变化时自动重载。
+// Package server 提供订阅 HTTP 接口，并在配置目录变化时自动重载。
 package server
 
 import (
@@ -6,55 +6,50 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"freedom/internal/config"
 )
 
-// Store 持有当前生效的配置，检测到文件变化时重新加载；新配置有错时保留旧配置。
+// Store 持有当前生效的配置，检测到配置目录有变化时重新加载；新配置有错时保留旧配置。
 type Store struct {
-	path string
+	dir string
 
-	mu      sync.Mutex
-	cfg     *config.Config
-	modTime time.Time
-	size    int64
+	mu          sync.Mutex
+	cfg         *config.Config
+	fingerprint string
 }
 
 // NewStore 加载配置，首次加载失败直接返回错误。
-func NewStore(path string) (*Store, error) {
-	s := &Store{path: path}
-	fi, err := os.Stat(path)
+func NewStore(dir string) (*Store, error) {
+	fp, err := config.Fingerprint(dir)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(dir)
 	if err != nil {
 		return nil, err
 	}
-	s.cfg, s.modTime, s.size = cfg, fi.ModTime(), fi.Size()
-	return s, nil
+	return &Store{dir: dir, cfg: cfg, fingerprint: fp}, nil
 }
 
-// Get 返回当前配置；文件有变化时先尝试重载。
+// Get 返回当前配置；目录有变化时先尝试重载。
 func (s *Store) Get() *config.Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	fi, err := os.Stat(s.path)
+	fp, err := config.Fingerprint(s.dir)
 	if err != nil {
-		slog.Error("读取配置文件状态失败，继续使用旧配置", "error", err)
+		slog.Error("读取配置目录失败，继续使用旧配置", "error", err)
 		return s.cfg
 	}
-	if fi.ModTime().Equal(s.modTime) && fi.Size() == s.size {
+	if fp == s.fingerprint {
 		return s.cfg
 	}
-	// 无论成功与否都记下这次的文件状态，避免同一个错误每个请求都打一遍日志
-	s.modTime, s.size = fi.ModTime(), fi.Size()
-	cfg, err := config.Load(s.path)
+	// 无论成功与否都记下这次的状态，避免同一个错误每个请求都打一遍日志
+	s.fingerprint = fp
+	cfg, err := config.Load(s.dir)
 	if err != nil {
 		slog.Error("配置有误，继续使用旧配置", "error", err)
 		return s.cfg

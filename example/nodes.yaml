@@ -1,0 +1,43 @@
+# 全部节点，mihomo 的 proxy 写法：原样输出到 Clash 订阅，并转换成分享链接。
+# 同一文件里可以用 YAML 锚点和合并键复用公共参数。
+
+- name: hk-01
+  type: vless
+  server: 203.0.113.10
+  port: 443
+  udp: true
+  uuid: 00000000-0000-0000-0000-000000000001
+  flow: xtls-rprx-vision
+  tls: true
+  servername: www.example.com
+  client-fingerprint: chrome
+  network: tcp
+  reality-opts: &reality-opts
+    public-key: tZtmSWvOyJkprZiMgZmtatD8Z4gM9sWuc2kjmYQe75w
+    short-id: "0123"
+
+- name: jp-01
+  type: vless
+  server: 203.0.113.20
+  port: 443
+  udp: true
+  uuid: 00000000-0000-0000-0000-000000000002
+  flow: xtls-rprx-vision
+  tls: true
+  servername: www.example.com
+  client-fingerprint: chrome
+  network: tcp
+  reality-opts: *reality-opts
+
+- name: hk-01 => jp-01
+  type: vless
+  server: relay.example.com
+  port: 443
+  uuid: 00000000-0000-0000-0000-000000000003
+  tls: true
+  servername: relay.example.com
+  network: ws
+  ws-opts:
+    path: /ws
+    headers:
+      Host: relay.example.com

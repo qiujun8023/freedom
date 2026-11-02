@@ -1,0 +1,6 @@
+# 只给 v2rayNG 用：不写 clash，Clash 格式下只有节点没有分流规则。
+token: change-me-fedcba9876543210
+
+nodes:
+  - hk-01
+  - hk-01 => jp-01

@@ -12,7 +12,7 @@ FROM scratch
 
 COPY --from=build /out/freedom /freedom
 
-ENV APP_CONFIG=/data/config.yaml
+ENV APP_CONFIG_DIR=/data
 
 EXPOSE 8000
 

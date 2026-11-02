@@ -21,11 +21,11 @@ import (
 
 const usage = `用法:
   freedom [serve]                    启动订阅服务
-  freedom check                      校验配置并列出每个 profile 的节点
+  freedom check                      校验配置，列出每个 profile 的节点数和没用到的节点
   freedom render <profile> [target]  打印订阅内容，target 为 clash（默认）或 v2ray
 
 参数:
-  -config  配置文件路径，默认读环境变量 APP_CONFIG，再默认 config.yaml
+  -dir     配置目录，默认读环境变量 APP_CONFIG_DIR，再默认当前目录
   -listen  监听地址，默认读环境变量 APP_LISTEN，再默认 :8000
 `
 
@@ -37,7 +37,7 @@ func main() {
 
 	fs := flag.NewFlagSet("freedom", flag.ExitOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	configPath := fs.String("config", envOr("APP_CONFIG", "config.yaml"), "")
+	configDir := fs.String("dir", envOr("APP_CONFIG_DIR", "."), "")
 	listen := fs.String("listen", envOr("APP_LISTEN", ":8000"), "")
 
 	args := os.Args[1:]
@@ -50,11 +50,11 @@ func main() {
 	var err error
 	switch cmd {
 	case "serve":
-		err = serve(*configPath, *listen)
+		err = serve(*configDir, *listen)
 	case "check":
-		err = check(*configPath)
+		err = check(*configDir)
 	case "render":
-		err = render(*configPath, fs.Args())
+		err = render(*configDir, fs.Args())
 	default:
 		fs.Usage()
 		os.Exit(2)
@@ -65,8 +65,8 @@ func main() {
 	}
 }
 
-func serve(path, listen string) error {
-	store, err := server.NewStore(path)
+func serve(dir, listen string) error {
+	store, err := server.NewStore(dir)
 	if err != nil {
 		return err
 	}
@@ -85,15 +85,15 @@ func serve(path, listen string) error {
 		srv.Shutdown(shutdown)
 	}()
 
-	slog.Info("订阅服务已启动", "listen", listen, "config", path, "profiles", len(store.Get().Profiles))
+	slog.Info("订阅服务已启动", "listen", listen, "dir", dir, "profiles", len(store.Get().Profiles))
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
 }
 
-func check(path string) error {
-	cfg, err := config.Load(path)
+func check(dir string) error {
+	cfg, err := config.Load(dir)
 	if err != nil {
 		return err
 	}
@@ -109,10 +109,13 @@ func check(path string) error {
 			fmt.Printf("  分享链接跳过 %s\n", s)
 		}
 	}
+	for _, n := range cfg.Unused {
+		fmt.Printf("没有 profile 用到节点 %s\n", n)
+	}
 	return nil
 }
 
-func render(path string, args []string) error {
+func render(dir string, args []string) error {
 	if len(args) < 1 || len(args) > 2 {
 		return errors.New("用法: freedom render <profile> [clash|v2ray]")
 	}
@@ -123,7 +126,7 @@ func render(path string, args []string) error {
 			return fmt.Errorf("未知的 target %q", args[1])
 		}
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(dir)
 	if err != nil {
 		return err
 	}

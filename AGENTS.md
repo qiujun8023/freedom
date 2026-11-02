@@ -7,7 +7,7 @@
 - 默认在 `master` 上开发；提交前确认 `git status --short` 只包含本次任务相关文件。
 - 不要回滚用户已有改动；遇到无关脏工作区直接忽略，除非它直接阻塞当前任务。
 - 仓库公开：示例和测试只用 `example.com`、`203.0.113.0/24` 这类保留地址和占位 UUID，不要写入真实域名、服务器 IP、节点名或凭据。真实配置只在部署机的挂载目录里。
-- 改了配置格式要同步改 `config.example.yaml` 和 README，`internal/config` 的测试会加载示例配置。
+- 改了配置格式要同步改 `example/` 和 README，`internal/config` 的测试会加载示例配置。
 
 ## 提交规则
 
@@ -21,8 +21,8 @@
 
 ```bash
 go test ./...
-go run . check -config config.example.yaml
-go run . render -config config.example.yaml alice-mac
+go run . check -dir example
+go run . render -dir example alice-mac
 docker build .
 ```
 

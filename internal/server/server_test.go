@@ -10,22 +10,22 @@ import (
 	"time"
 )
 
-const testConfig = `
-nodes:
-  - {name: a, type: vless, server: 1.1.1.1, port: 443, uuid: x}
-profiles:
-  dev:
-    token: 0123456789abcdef
-    clash: {rules: ["MATCH,DIRECT"]}
-`
+const (
+	testNodes   = "- {name: a, type: vless, server: 1.1.1.1, port: 443, uuid: x}\n"
+	testProfile = "token: 0123456789abcdef\nclash: {rules: [\"MATCH,DIRECT\"]}\n"
+)
 
+// setup 写出配置目录并启动 Handler，返回 profile 文件路径。
 func setup(t *testing.T) (string, http.Handler) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(testConfig), 0o600); err != nil {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "profiles"), 0o755)
+	os.WriteFile(filepath.Join(dir, "nodes.yaml"), []byte(testNodes), 0o600)
+	path := filepath.Join(dir, "profiles", "dev.yaml")
+	if err := os.WriteFile(path, []byte(testProfile), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewStore(path)
+	store, err := NewStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,14 +75,14 @@ func TestReload(t *testing.T) {
 	later := time.Now().Add(time.Minute)
 
 	// 写入有错的配置：保留旧配置
-	os.WriteFile(path, []byte("nodes: ["), 0o600)
+	os.WriteFile(path, []byte("token: ["), 0o600)
 	os.Chtimes(path, later, later)
 	if rec := get(h, "/sub/dev?token=0123456789abcdef", ""); rec.Code != http.StatusOK {
 		t.Errorf("坏配置不应影响服务: %d", rec.Code)
 	}
 
 	// 写入新配置：新 token 生效
-	os.WriteFile(path, []byte(strings.Replace(testConfig, "0123456789abcdef", "fedcba9876543210", 1)), 0o600)
+	os.WriteFile(path, []byte(strings.Replace(testProfile, "0123456789abcdef", "fedcba9876543210", 1)), 0o600)
 	later = later.Add(time.Minute)
 	os.Chtimes(path, later, later)
 	if rec := get(h, "/sub/dev?token=fedcba9876543210", ""); rec.Code != http.StatusOK {
