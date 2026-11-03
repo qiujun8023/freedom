@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,15 +58,53 @@ type Config struct {
 type Profile struct {
 	Name    string
 	Token   string
-	Nodes   []string // 选中的节点名，按 nodes.yaml 中的顺序
+	Nodes   []string // 选中节点在订阅里显示的名字，按 nodes.yaml 中的顺序
 	Skipped []string // 无法转换为分享链接而跳过的节点及原因
 	Outputs map[Target][]byte
+
+	sources []string // 选中节点在 nodes.yaml 里的名字
 }
 
 type rawProfile struct {
 	Token string         `yaml:"token"`
-	Nodes []string       `yaml:"nodes"`
+	Nodes []nodeRef      `yaml:"nodes"`
 	Clash map[string]any `yaml:"clash"`
+}
+
+// nodeRef 是 profile 里引用的一个节点：直接写节点名，或写成 {node: 节点名, name: 在这个订阅里显示的名字}。
+type nodeRef struct {
+	Node string `yaml:"node"`
+	Name string `yaml:"name"`
+}
+
+func (r *nodeRef) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		r.Node = n.Value
+		return nil
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i < len(n.Content); i += 2 {
+			if k := n.Content[i].Value; k != "node" && k != "name" {
+				return fmt.Errorf("第 %d 行: 节点只能写 node 和 name，不认识 %q", n.Content[i].Line, k)
+			}
+		}
+	}
+	type plain nodeRef
+	if err := n.Decode((*plain)(r)); err != nil {
+		return err
+	}
+	if r.Node == "" || r.Name == "" {
+		return fmt.Errorf("第 %d 行: 改名的节点要同时写 node 和 name", n.Line)
+	}
+	return nil
+}
+
+// display 返回节点在订阅里显示的名字。
+func (r nodeRef) display() string {
+	if r.Name != "" {
+		return r.Name
+	}
+	return r.Node
 }
 
 var profileNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -97,7 +136,7 @@ func Load(dir string) (*Config, error) {
 			return nil, fmt.Errorf("profile %s 和 %s 的 token 重复", name, other)
 		}
 		tokens[p.Token] = name
-		for _, n := range p.Nodes {
+		for _, n := range p.sources {
 			used[n] = true
 		}
 		cfg.Profiles[name] = p
@@ -207,12 +246,12 @@ func loadProfile(path, name string, nodes []map[string]any) (*Profile, error) {
 		return nil, errors.New("clash 里不要写 proxies，节点由 nodes 选择")
 	}
 
-	selected, err := selectNodes(rp.Nodes, nodes)
+	selected, sources, err := selectNodes(rp.Nodes, nodes)
 	if err != nil {
 		return nil, err
 	}
 
-	p := &Profile{Name: name, Token: rp.Token, Outputs: make(map[Target][]byte, 2)}
+	p := &Profile{Name: name, Token: rp.Token, Outputs: make(map[Target][]byte, 2), sources: sources}
 	for _, n := range selected {
 		p.Nodes = append(p.Nodes, n["name"].(string))
 	}
@@ -237,32 +276,43 @@ func loadProfile(path, name string, nodes []map[string]any) (*Profile, error) {
 }
 
 // selectNodes 按节点名挑选节点，结果按 nodes.yaml 中的顺序；不写表示全部节点。
-func selectNodes(names []string, nodes []map[string]any) ([]map[string]any, error) {
-	if len(names) == 0 {
-		return nodes, nil
-	}
-	want := make(map[string]bool, len(names))
-	for _, n := range names {
-		if want[n] {
-			return nil, fmt.Errorf("nodes 里 %q 重复", n)
+// 改了名的节点返回副本，name 换成新名字；sources 是对应的原节点名。
+func selectNodes(refs []nodeRef, nodes []map[string]any) (selected []map[string]any, sources []string, err error) {
+	if len(refs) == 0 {
+		for _, n := range nodes {
+			sources = append(sources, n["name"].(string))
 		}
-		want[n] = true
+		return nodes, sources, nil
 	}
-	var out []map[string]any
+	want := make(map[string]nodeRef, len(refs))
+	names := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		if _, ok := want[r.Node]; ok {
+			return nil, nil, fmt.Errorf("nodes 里 %q 重复", r.Node)
+		}
+		if names[r.display()] {
+			return nil, nil, fmt.Errorf("nodes 里显示名 %q 重复", r.display())
+		}
+		want[r.Node] = r
+		names[r.display()] = true
+	}
 	for _, n := range nodes {
-		name := n["name"].(string)
-		if want[name] {
-			out = append(out, n)
-			delete(want, name)
+		src := n["name"].(string)
+		r, ok := want[src]
+		if !ok {
+			continue
 		}
+		if r.Name != "" {
+			n = maps.Clone(n)
+			n["name"] = r.Name
+		}
+		selected = append(selected, n)
+		sources = append(sources, src)
+		delete(want, src)
 	}
 	if len(want) > 0 {
-		missing := make([]string, 0, len(want))
-		for n := range want {
-			missing = append(missing, n)
-		}
-		slices.Sort(missing)
-		return nil, fmt.Errorf("nodes 里的节点不存在: %s", strings.Join(missing, ", "))
+		missing := slices.Sorted(maps.Keys(want))
+		return nil, nil, fmt.Errorf("nodes 里的节点不存在: %s", strings.Join(missing, ", "))
 	}
-	return out, nil
+	return selected, sources, nil
 }

@@ -35,6 +35,8 @@ profile 文件：
 token: ...          # 至少 16 个字符，各 profile 不能重复，用 freedom token 生成
 nodes:              # 节点名，精确匹配，按 nodes.yaml 中的顺序输出；不写表示全部节点
   - hk-01
+  - node: jp-01     # 只在这个订阅里改名显示，clash 里也用新名字引用
+    name: 日本
 clash:              # 可选，只在输出 Clash 格式时使用：mihomo 配置，不写 proxies
   proxy-groups: [...]
   rules: [...]

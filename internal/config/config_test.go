@@ -21,7 +21,7 @@ func TestExample(t *testing.T) {
 		t.Errorf("alice-mac 节点 = %s", got)
 	}
 	android := cfg.Profiles["alice-android"]
-	if got := strings.Join(android.Nodes, "|"); got != "hk-01|hk-01 => jp-01" {
+	if got := strings.Join(android.Nodes, "|"); got != "香港|hk-01 => jp-01" {
 		t.Errorf("alice-android 节点 = %s", got)
 	}
 	if len(cfg.Unused) != 0 {
@@ -106,6 +106,48 @@ func TestNodesAndFiles(t *testing.T) {
 	}
 }
 
+func TestRename(t *testing.T) {
+	dir := writeDir(t, map[string]string{"profiles/p.yaml": `
+token: 0123456789abcdef
+nodes:
+  - b(香港)
+  - {node: a, name: 节点A}
+clash:
+  proxy-groups: [{name: g, type: select, proxies: [节点A, b(香港)]}]
+  rules: ['MATCH,g']
+`})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Profiles["p"]
+	if got := strings.Join(p.Nodes, "|"); got != "节点A|b(香港)" {
+		t.Errorf("节点 = %s，应按 nodes.yaml 顺序并使用新名字", got)
+	}
+	if len(cfg.Unused) != 0 {
+		t.Errorf("改名的节点应算作已使用: %v", cfg.Unused)
+	}
+	if !strings.Contains(string(p.Outputs[TargetClash]), "name: 节点A") {
+		t.Errorf("Clash 输出没有改名:\n%s", p.Outputs[TargetClash])
+	}
+	links, _ := base64.StdEncoding.DecodeString(string(p.Outputs[TargetV2ray]))
+	if !strings.Contains(string(links), "#%E8%8A%82%E7%82%B9A") {
+		t.Errorf("分享链接没有改名: %s", links)
+	}
+
+	// 改名不能影响其他 profile 和原节点
+	dir = writeDir(t, map[string]string{
+		"profiles/p.yaml": "token: 0123456789abcdef\nnodes: [{node: a, name: x}]\n",
+		"profiles/q.yaml": "token: fedcba9876543210\nnodes: [a]\n",
+	})
+	if cfg, err = Load(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Profiles["q"].Nodes[0]; got != "a" {
+		t.Errorf("另一个 profile 的节点名被改成了 %s", got)
+	}
+}
+
 func TestErrors(t *testing.T) {
 	const tok = "token: 0123456789abcdef\n"
 	cases := map[string]map[string]string{
@@ -121,6 +163,10 @@ func TestErrors(t *testing.T) {
 		"节点不存在":             {"profiles/p.yaml": tok + "nodes: [c]\n"},
 		"节点不支持正则":           {"profiles/p.yaml": tok + "nodes: ['.*']\n"},
 		"节点重复":              {"profiles/p.yaml": tok + "nodes: [a, a]\n"},
+		"改名后重名":             {"profiles/p.yaml": tok + "nodes: [a, {node: b(香港), name: a}]\n"},
+		"改名缺 name":          {"profiles/p.yaml": tok + "nodes: [{node: a}]\n"},
+		"改名字段写错":            {"profiles/p.yaml": tok + "nodes: [{node: a, name: x, nmae: y}]\n"},
+		"改名引用原名":            {"profiles/p.yaml": tok + "nodes: [{node: a, name: x}]\nclash: {rules: ['MATCH,a']}\n"},
 		"代理组成员不存在":          {"profiles/p.yaml": tok + "clash: {proxy-groups: [{name: g, type: select, proxies: [c]}]}\n"},
 		"规则目标不存在":           {"profiles/p.yaml": tok + "clash: {rules: ['MATCH,proxy']}\n"},
 		"rule-provider 不存在": {"profiles/p.yaml": tok + "clash: {rules: ['RULE-SET,cn,DIRECT']}\n"},

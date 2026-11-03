@@ -2,5 +2,6 @@
 token: change-me-fedcba9876543210
 
 nodes:
-  - hk-01
+  - node: hk-01     # 在这个订阅里改名显示
+    name: 香港
   - hk-01 => jp-01
