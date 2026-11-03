@@ -194,11 +194,7 @@ func profileFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-func decodeStrict(path string, v any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
+func decodeStrict(data []byte, v any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
@@ -208,8 +204,12 @@ func decodeStrict(path string, v any) error {
 }
 
 func loadNodes(path string) ([]map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	var nodes []map[string]any
-	if err := decodeStrict(path, &nodes); err != nil {
+	if err := decodeStrict(data, &nodes); err != nil {
 		return nil, fmt.Errorf("%s: %w", nodesFile, err)
 	}
 	if len(nodes) == 0 {
@@ -235,8 +235,12 @@ func loadNodes(path string) ([]map[string]any, error) {
 }
 
 func loadProfile(path, name string, nodes []map[string]any) (*Profile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	var rp rawProfile
-	if err := decodeStrict(path, &rp); err != nil {
+	if err := decodeStrict(data, &rp); err != nil {
 		return nil, err
 	}
 	if len(rp.Token) < 16 {
@@ -256,7 +260,7 @@ func loadProfile(path, name string, nodes []map[string]any) (*Profile, error) {
 		p.Nodes = append(p.Nodes, n["name"].(string))
 	}
 
-	clash, err := renderClash(rp.Clash, selected)
+	clash, err := renderClash(data, rp.Clash, selected)
 	if err != nil {
 		return nil, err
 	}

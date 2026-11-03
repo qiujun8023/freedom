@@ -2,74 +2,153 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
 
-// clashKeyOrder 是输出时顶层字段的顺序，其余字段按字母序排在最后。
-var clashKeyOrder = []string{
-	"mixed-port", "port", "socks-port", "redir-port", "tproxy-port",
-	"allow-lan", "bind-address", "mode", "log-level", "ipv6",
-	"external-controller", "secret", "unified-delay", "tcp-concurrent",
-	"find-process-mode", "global-client-fingerprint", "geodata-mode",
-	"geox-url", "profile", "sniffer", "tun", "hosts", "dns",
-	"proxies", "proxy-providers", "proxy-groups", "rule-providers", "rules",
-}
+var nodeKeyOrder = []string{"name", "type", "server", "port"}
 
-var (
-	nodeKeyOrder  = []string{"name", "type", "server", "port"}
-	groupKeyOrder = []string{"name", "type"}
-)
-
-func renderClash(base map[string]any, nodes []map[string]any) ([]byte, error) {
-	clash := make(map[string]any, len(base)+1)
+// renderClash 输出 Clash 配置：profile 里 clash 段的原文去掉一层缩进后照原样输出，保留注释、空行和字段顺序，
+// 生成的 proxies 插在 proxy-groups 之前（没有 proxy-groups 时放在最后）。
+func renderClash(src []byte, base map[string]any, nodes []map[string]any) ([]byte, error) {
 	for k, v := range base {
-		if s, ok := v.([]any); ok {
-			v = flatten(s)
+		if list, ok := v.([]any); ok && slices.ContainsFunc(list, func(e any) bool { _, ok := e.([]any); return ok }) {
+			return nil, fmt.Errorf("clash.%s 里不能嵌套列表", k)
 		}
-		clash[k] = v
 	}
 
 	proxies := make([]any, len(nodes))
 	for i, n := range nodes {
 		proxies[i] = orderedMap(n, nodeKeyOrder)
 	}
+	clash := maps.Clone(base)
+	if clash == nil {
+		clash = make(map[string]any, 1)
+	}
 	clash["proxies"] = proxies
-
 	if err := checkReferences(clash, nodes); err != nil {
 		return nil, err
-	}
-	if groups, ok := clash["proxy-groups"].([]any); ok {
-		ordered := make([]any, len(groups))
-		for i, g := range groups {
-			ordered[i] = orderedMap(g.(map[string]any), groupKeyOrder)
-		}
-		clash["proxy-groups"] = ordered
 	}
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(orderedMap(clash, clashKeyOrder)); err != nil {
+	if err := enc.Encode(map[string]any{"proxies": proxies}); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	proxyText := buf.String()
+	if len(base) == 0 {
+		return []byte(proxyText), nil
+	}
+
+	lines, err := clashLines(src)
+	if err != nil {
+		return nil, err
+	}
+	at := len(lines)
+	for i, l := range lines {
+		if strings.HasPrefix(l, "proxy-groups:") {
+			at = i
+			// proxy-groups 上方紧挨着的注释跟着它走
+			for at > 0 && strings.HasPrefix(lines[at-1], "#") {
+				at--
+			}
+			break
+		}
+	}
+	var out strings.Builder
+	for _, l := range lines[:at] {
+		out.WriteString(l + "\n")
+	}
+	if at > 0 && lines[at-1] != "" {
+		out.WriteString("\n")
+	}
+	out.WriteString(proxyText)
+	if at < len(lines) {
+		out.WriteString("\n")
+	}
+	for _, l := range lines[at:] {
+		out.WriteString(l + "\n")
+	}
+
+	// 兜底：输出必须能解析，且内容和校验过的配置一致
+	var got map[string]any
+	if err := yaml.Unmarshal([]byte(out.String()), &got); err != nil {
+		return nil, fmt.Errorf("生成的 Clash 配置无法解析: %w", err)
+	}
+	if len(got) != len(clash) {
+		return nil, errors.New("生成的 Clash 配置字段数不对")
+	}
+	if ps, _ := got["proxies"].([]any); len(ps) != len(nodes) {
+		return nil, errors.New("生成的 Clash 配置节点数不对")
+	}
+	return []byte(out.String()), nil
 }
 
-// flatten 展开嵌套列表，方便用 YAML 锚点拼接规则：rules: [*mine, *common]。
-func flatten(in []any) []any {
-	out := make([]any, 0, len(in))
-	for _, v := range in {
-		if s, ok := v.([]any); ok {
-			out = append(out, flatten(s)...)
-			continue
-		}
-		out = append(out, v)
+// clashLines 取出 profile 里 clash 段的原文，去掉一层缩进，末尾的空行和顶格注释（属于下一个字段）去掉。
+// 流式写法（clash: {...}）没有可保留的排版，改为重新生成。
+func clashLines(src []byte) ([]string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(src, &doc); err != nil {
+		return nil, err
 	}
-	return out
+	root := doc.Content[0]
+	var key, val, next *yaml.Node
+	for i := 0; i < len(root.Content); i += 2 {
+		if root.Content[i].Value == "clash" {
+			key, val = root.Content[i], root.Content[i+1]
+			if i+2 < len(root.Content) {
+				next = root.Content[i+2]
+			}
+			break
+		}
+	}
+	if val.Kind != yaml.MappingNode || val.Style&yaml.FlowStyle != 0 || val.Line == key.Line {
+		blockStyle(val)
+		var buf bytes.Buffer
+		enc := yaml.NewEncoder(&buf)
+		enc.SetIndent(2)
+		if err := enc.Encode(val); err != nil {
+			return nil, err
+		}
+		return strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n"), nil
+	}
+
+	all := strings.Split(strings.ReplaceAll(string(src), "\r\n", "\n"), "\n")
+	end := len(all)
+	if next != nil {
+		end = next.Line - 1
+	}
+	lines := all[key.Line:end]
+	for len(lines) > 0 {
+		last := lines[len(lines)-1]
+		if strings.TrimSpace(last) != "" && !strings.HasPrefix(last, "#") {
+			break
+		}
+		lines = lines[:len(lines)-1]
+	}
+	indent := val.Content[0].Column - 1
+	for i, l := range lines {
+		if len(l) >= indent && strings.TrimSpace(l[:indent]) == "" {
+			lines[i] = l[indent:]
+		} else {
+			lines[i] = strings.TrimLeft(l, " ")
+		}
+	}
+	return lines, nil
+}
+
+// blockStyle 把流式写法改成块写法，方便在中间插入 proxies。
+func blockStyle(n *yaml.Node) {
+	n.Style &^= yaml.FlowStyle
+	for _, c := range n.Content {
+		blockStyle(c)
+	}
 }
 
 // builtinPolicies 是 mihomo 内置的策略名。

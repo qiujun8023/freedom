@@ -148,6 +148,53 @@ clash:
 	}
 }
 
+func TestClashKeepsSource(t *testing.T) {
+	dir := writeDir(t, map[string]string{"profiles/p.yaml": `token: 0123456789abcdef
+
+clash:
+  # 端口
+  mixed-port: 7890
+
+  dns:
+    enable: true   # 行尾注释
+    listen: 127.0.0.1:53
+
+  # 代理组
+  proxy-groups:
+    - {name: g, type: select, proxies: [a]}
+
+  rules:
+    - MATCH,g
+
+# 这行属于 nodes
+nodes: [a]
+`})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(cfg.Profiles["p"].Outputs[TargetClash])
+	want := `# 端口
+mixed-port: 7890
+
+dns:
+  enable: true   # 行尾注释
+  listen: 127.0.0.1:53
+
+proxies:
+  - name: a
+`
+	if !strings.HasPrefix(got, want) {
+		t.Errorf("注释、空行和顺序应保留，proxies 插在代理组注释之前:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "\n# 代理组\nproxy-groups:\n  - {name: g, type: select, proxies: [a]}\n\nrules:\n  - MATCH,g\n") {
+		t.Errorf("后半部分不对:\n%s", got)
+	}
+	if strings.Contains(got, "属于 nodes") {
+		t.Errorf("下一个字段的注释不应带进来:\n%s", got)
+	}
+}
+
 func TestErrors(t *testing.T) {
 	const tok = "token: 0123456789abcdef\n"
 	cases := map[string]map[string]string{
@@ -172,6 +219,7 @@ func TestErrors(t *testing.T) {
 		"rule-provider 不存在": {"profiles/p.yaml": tok + "clash: {rules: ['RULE-SET,cn,DIRECT']}\n"},
 		"引用未选中的节点":          {"profiles/p.yaml": tok + "nodes: [a]\nclash: {rules: ['MATCH,b(香港)']}\n"},
 		"token 重复":          {"profiles/p.yaml": tok, "profiles/q.yaml": tok},
+		"clash 里嵌套列表":       {"profiles/p.yaml": tok + "clash: {rules: [[MATCH,DIRECT]]}\n"},
 	}
 	for name, files := range cases {
 		if _, err := Load(writeDir(t, files)); err == nil {
