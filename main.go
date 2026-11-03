@@ -23,6 +23,7 @@ const usage = `用法:
   freedom [serve]                    启动订阅服务
   freedom check                      校验配置，列出每个 profile 的节点数和没用到的节点
   freedom render <profile> [target]  打印订阅内容，target 为 clash（默认）或 v2ray
+  freedom token                      生成一个新 token
 
 参数:
   -dir     配置目录，默认读环境变量 APP_CONFIG_DIR，再默认当前目录
@@ -55,6 +56,8 @@ func main() {
 		err = check(*configDir)
 	case "render":
 		err = render(*configDir, fs.Args())
+	case "token":
+		fmt.Println(config.NewToken())
 	default:
 		fs.Usage()
 		os.Exit(2)

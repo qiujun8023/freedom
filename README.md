@@ -32,7 +32,7 @@ profiles/<名字>.yaml     # 一个订阅一个文件，文件名就是 profile 
 profile 文件：
 
 ```yaml
-token: ...          # 至少 16 个字符，各 profile 不能重复
+token: ...          # 至少 16 个字符，各 profile 不能重复，用 freedom token 生成
 nodes:              # 节点名，精确匹配，按 nodes.yaml 中的顺序输出；不写表示全部节点
   - hk-01
 clash:              # 可选，只在输出 Clash 格式时使用：mihomo 配置，不写 proxies
@@ -61,6 +61,7 @@ GET /sub/<profile>?token=<token>[&target=clash|v2ray]
 freedom                                  # 启动服务
 freedom check                            # 校验配置，列出每个 profile 的节点数、跳过的节点和没用到的节点
 freedom render <profile> [clash|v2ray]   # 打印客户端会拿到的订阅内容
+freedom token                            # 生成一个新 token：16 位大小写字母和数字，不含 0 O o 1 l I
 ```
 
 | 参数 | 环境变量 | 默认值 |
