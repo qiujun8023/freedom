@@ -70,6 +70,25 @@ func TestSubscription(t *testing.T) {
 	}
 }
 
+func TestDecode(t *testing.T) {
+	_, h := setup(t)
+
+	rec := get(h, "/sub/dev?token=0123456789abcdef", "Mozilla/5.0")
+	if rec.Header().Get("Content-Disposition") != "" || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Errorf("应直接显示而不是下载: %v", rec.Header())
+	}
+
+	if rec := get(h, "/sub/dev?token=0123456789abcdef&target=v2ray", ""); strings.HasPrefix(rec.Body.String(), "vless://") {
+		t.Errorf("不带 decode 应返回 base64: %s", rec.Body)
+	}
+	if rec := get(h, "/sub/dev?token=0123456789abcdef&target=v2ray&decode=1", ""); !strings.HasPrefix(rec.Body.String(), "vless://") {
+		t.Errorf("decode=1 应返回明文分享链接: %s", rec.Body)
+	}
+	if rec := get(h, "/sub/dev?token=0123456789abcdef&target=clash&decode=1", ""); !strings.Contains(rec.Body.String(), "proxies:") {
+		t.Errorf("Clash 格式应忽略 decode: %s", rec.Body)
+	}
+}
+
 func TestReload(t *testing.T) {
 	path, h := setup(t)
 	later := time.Now().Add(time.Minute)

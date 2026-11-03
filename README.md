@@ -48,10 +48,11 @@ clash:              # 可选，只在输出 Clash 格式时使用：mihomo 配�
 ## 订阅地址
 
 ```
-GET /sub/<profile>?token=<token>[&target=clash|v2ray]
+GET /sub/<profile>?token=<token>[&target=clash|v2ray][&decode=1]
 ```
 
 - 默认按 UA 选择格式，`target` 参数可以强制指定
+- 返回内容都是纯文本，浏览器打开直接显示；v2ray 格式加 `decode=1` 返回明文分享链接，一行一个
 - token 错误或 profile 不存在一律返回 404
 - `GET /healthz` 用于健康检查
 

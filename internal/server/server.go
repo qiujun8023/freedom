@@ -3,9 +3,9 @@ package server
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -107,17 +107,17 @@ func subscription(store *Store, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h := w.Header()
-	switch target {
-	case config.TargetClash:
-		h.Set("Content-Type", "text/yaml; charset=utf-8")
-		h.Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name)+".yaml")
-	default:
-		h.Set("Content-Type", "text/plain; charset=utf-8")
+	body := p.Outputs[target]
+	if target == config.TargetV2ray && r.URL.Query().Get("decode") == "1" {
+		// 解码成明文分享链接，一行一个，方便查看
+		body, _ = base64.StdEncoding.DecodeString(string(body))
 	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/plain; charset=utf-8")
 	h.Set("Profile-Update-Interval", "24")
 	h.Set("Cache-Control", "no-store")
-	w.Write(p.Outputs[target])
+	w.Write(body)
 	log.Info("下发订阅", "target", target)
 }
 
